@@ -44,16 +44,16 @@ jobs:
         with:
           node-version: 18
 
-      # Google Site URL se Desktop App Build Karna
+      # Google Site URL se Non-Interactive Fast Desktop App Build Karna
       - name: Build Web Desktop App
         run: |
-          npx nativefier --name "Kyxgo Technology" "https://sites.google.com/view/kyxgo/technology" --single-instance app-build/
+          npx --yes nativefier --name "Kyxgo Technology" "https://sites.google.com/view/kyxgo/technology" --single-instance --conceal app-build/
 
-      # Code Signing Certificate Generate aur Apply Karna
+      # Fixed Code Signing Certificate Syntax (Duplicate -Type Parameter Removed)
       - name: Generate Code Signing Certificate & Sign Binary Files
         shell: powershell
         run: |
-          $cert = New-SelfSignedCertificate -CertStoreLocation cert:\CurrentUser\My -Subject "CN=Kyxgo Technology" -Type CodeSigningCert -KeyUsage DigitalSignature -Type Custom -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3")
+          $cert = New-SelfSignedCertificate -CertStoreLocation cert:\CurrentUser\My -Subject "CN=Kyxgo Technology" -Type CodeSigningCert -KeyUsage DigitalSignature -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3")
           
           $files = Get-ChildItem -Path "app-build" -Recurse -Include *.exe, *.dll
           foreach ($file in $files) {
