@@ -1,4 +1,4 @@
-name: Deploy Pages & Build Signed Executables
+name: Deploy Pages, Build App & Silent Fast Signed Installer
 
 on:
   push:
@@ -12,6 +12,7 @@ permissions:
   id-token: write
 
 jobs:
+  # 1. Deploy index.html to GitHub Pages
   deploy-pages:
     environment:
       name: github-pages
@@ -30,94 +31,115 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-  build-and-sign:
+  # 2. Build Python EXE, Sign, & Create Auto-Silent Installer
+  build-and-package:
     needs: deploy-pages
     runs-on: windows-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          node-version: 18
+          python-version: '3.10'
 
-      - name: Build Web Desktop App
+      - name: Install Python Dependencies
         run: |
-          npx --yes nativefier --name "Kyxgo Technology" "https://sites.google.com/view/kyxgo/technology" --single-instance --conceal app-build/
+          python -m pip install --upgrade pip
+          pip install pywebview pyinstaller
 
-      - name: Cleanup Unnecessary Electron Files
+      # Build Single-File Executable
+      - name: Build Executable with PyInstaller
         shell: powershell
         run: |
-          if (Test-Path "app-build") {
-              Get-ChildItem -Path "app-build" -Recurse -Filter "locales" | ForEach-Object {
-                  Get-ChildItem -Path $_.FullName -Exclude "en-US.pak" | Remove-Item -Force
-              }
-              Get-ChildItem -Path "app-build" -Recurse -Include "*.pak.info", "LICENSES.chromium.html" | Remove-Item -Force
-          }
+          pyinstaller --noconfirm --onefile --windowed --add-data "index.html;." --icon="logo.ico" --name "KyxgoPartnerApp" app.py
 
-      - name: Generate Code Signing Certificate & Sign Binary Files
+      # Self-Signed Certificate Generation
+      - name: Generate Code Signing Certificate
         shell: powershell
         run: |
-          $cert = New-SelfSignedCertificate -CertStoreLocation cert:\CurrentUser\My -Subject "CN=Kyxgo Technology" -Type CodeSigningCert -KeyUsage DigitalSignature -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3")
-          
-          if (Test-Path "app-build") {
-              $files = Get-ChildItem -Path "app-build" -Recurse -Include *.exe, *.dll
-              foreach ($file in $files) {
-                  Set-AuthenticodeSignature -FilePath $file.FullName -Certificate $cert
-              }
-          } else {
-              Write-Error "app-build directory was not created!"
-              exit 1
-          }
+          New-SelfSignedCertificate -CertStoreLocation cert:\CurrentUser\My -Subject "CN=Kyxgo Technology" -Type CodeSigningCert -KeyUsage DigitalSignature -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3")
 
-      - name: Install Inno Setup & Build Fast Installer
+      # Sign Main EXE File
+      - name: Sign Main EXE
+        shell: powershell
+        run: |
+          $cert = Get-ChildItem cert:\CurrentUser\My -CodeSigningCert | Select-Object -First 1
+          Set-AuthenticodeSignature -FilePath "dist\KyxgoPartnerApp.exe" -Certificate $cert
+
+      # Build Ultra-Fast & Silent Inno Setup Installer
+      - name: Build Inno Setup Installer
         shell: powershell
         run: |
           choco install innosetup -y
           
           $issContent = @"
+          #define MyAppName "Kyxgo Partner App"
+          #define MyAppVersion "1.0.${{ github.run_number }}"
+          #define MyAppPublisher "Kyxgo Technology"
+          #define MyAppURL "https://adityarai0133-rajput.github.io/kyxgo-partner-/"
+          #define MyAppExeName "KyxgoPartnerApp.exe"
+
           [Setup]
-          AppName=Kyxgo Technology
-          AppVersion=1.0.${{ github.run_number }}
-          DefaultDirName={userpf}\Kyxgo Technology
-          DefaultGroupName=Kyxgo Technology
+          AppId={{8F4C82A2-4D93-4E82-9B7C-12A5C9B38012}
+          AppName={#MyAppName}
+          AppVersion={#MyAppVersion}
+          AppPublisher={#MyAppPublisher}
+          AppPublisherURL={#MyAppURL}
+          AppSupportURL={#MyAppURL}
+          AppUpdatesURL={#MyAppURL}
+          DefaultDirName={userpf}\{#MyAppName}
+          DisableProgramGroupPage=yes
+          DefaultGroupName={#MyAppPublisher}
           OutputDir=output
-          OutputBaseFilename=KyxgoTechnology-Setup
+          OutputBaseFilename=KyxgoPartnerApp-Setup
+          SetupIconFile=logo.ico
           Compression=lzma/fast
           SolidCompression=no
           PrivilegesRequired=lowest
+          UninstallDisplayIcon={app}\{#MyAppExeName}
+
+          ; Direct install configuration (Hides setup wizard UI)
           DisableWelcomePage=yes
           DisableReadyPage=yes
           DisableFinishedPage=yes
-          DisableProgramGroupPage=yes
           DisableDirPage=yes
-          
+          AlwaysShowComponentsList=no
+
+          [Languages]
+          Name: "english"; MessagesFile: "compiler:Default.isl"
+
           [Files]
-          Source: "app-build\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
-          
+          Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+
           [Icons]
-          Name: "{group}\Kyxgo Technology"; Filename: "{app}\Kyxgo Technology.exe"
-          Name: "{autodesktop}\Kyxgo Technology"; Filename: "{app}\Kyxgo Technology.exe"
+          Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+          Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+          Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 
           [Run]
-          Filename: "{app}\Kyxgo Technology.exe"; Description: "Launch App"; Flags: postinstall nowait
+          Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
           "@
-          
+
           Set-Content -Path "setup.iss" -Value $issContent
           ISCC.exe setup.iss
 
+      # Sign Installer EXE File
       - name: Sign Final Installer EXE
         shell: powershell
         run: |
           $cert = Get-ChildItem cert:\CurrentUser\My -CodeSigningCert | Select-Object -First 1
-          Set-AuthenticodeSignature -FilePath "output\KyxgoTechnology-Setup.exe" -Certificate $cert
+          Set-AuthenticodeSignature -FilePath "output\KyxgoPartnerApp-Setup.exe" -Certificate $cert
 
-      - name: Upload Fast Signed Installer
+      # Upload Artifacts / Release
+      - name: Create Release & Upload Executables
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v1.0.${{ github.run_number }}
-          name: Kyxgo Fast Release v1.0.${{ github.run_number }}
-          files: output/KyxgoTechnology-Setup.exe
+          name: Kyxgo Partner App v1.0.${{ github.run_number }}
+          files: |
+            dist/KyxgoPartnerApp.exe
+            output/KyxgoPartnerApp-Setup.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
