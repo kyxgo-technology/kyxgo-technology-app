@@ -1,0 +1,84 @@
+name: Build Kyxgo Signed Installer EXE
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-sign-installer:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      # Website (Google Site) ko Desktop App Window mein Build karna
+      - name: Build Web Desktop App
+        run: |
+          npx nativefier --name "Kyxgo Technology" "https://sites.google.com/view/kyxgo/technology" --single-instance app-build/
+
+      # Self-Signed Code Signing Certificate Create & Apply
+      - name: Generate Code Signing Certificate & Sign Binary Files
+        shell: powershell
+        run: |
+          $cert = New-SelfSignedCertificate -CertStoreLocation cert:\CurrentUser\My -Subject "CN=Kyxgo Technology" -Type CodeSigningCert -KeyUsage DigitalSignature -Type Custom -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3")
+          
+          # Internal EXE/DLL Sign karna
+          $files = Get-ChildItem -Path "app-build" -Recurse -Include *.exe, *.dll
+          foreach ($file in $files) {
+              Set-AuthenticodeSignature -FilePath $file.FullName -Certificate $cert
+          }
+
+      # Single Executable Installer (.exe) Package generate karna Inno Setup se
+      - name: Install Inno Setup & Package Installer
+        shell: powershell
+        run: |
+          choco install innosetup -y
+          
+          $issContent = @"
+          [Setup]
+          AppName=Kyxgo Technology
+          AppVersion=1.0.${{ github.run_number }}
+          DefaultDirName={autopf}\Kyxgo Technology
+          DefaultGroupName=Kyxgo Technology
+          OutputDir=installer_output
+          OutputBaseFilename=KyxgoTechnology-Setup
+          Compression=lzma
+          SolidCompression=yes
+          
+          [Files]
+          Source: "app-build\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
+          
+          [Icons]
+          Name: "{group}\Kyxgo Technology"; Filename: "{app}\Kyxgo Technology.exe"
+          Name: "{commondesktop}\Kyxgo Technology"; Filename: "{app}\Kyxgo Technology.exe"
+          "@
+          
+          Set-Content -Path "setup.iss" -Value $issContent
+          ISCC.exe setup.iss
+
+      # Final Installer EXE Signature Apply
+      - name: Sign Final Installer EXE
+        shell: powershell
+        run: |
+          $cert = Get-ChildItem cert:\CurrentUser\My -CodeSigningCert | Select-Object -First 1
+          Set-AuthenticodeSignature -FilePath "installer_output\KyxgoTechnology-Setup.exe" -Certificate $cert
+
+      # Direct .exe File GitHub Releases Par Host Karna
+      - name: Upload Signed Installer to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Kyxgo Release v1.0.${{ github.run_number }}
+          files: installer_output/KyxgoTechnology-Setup.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
