@@ -42,31 +42,35 @@ jobs:
         with:
           node-version: 18
 
-      # Web App Build With Custom Icon (.ico)
       - name: Build Web Desktop App
         run: |
-          npx --yes nativefier --name "Kyxgo Technology" "https://sites.google.com/view/kyxgo/technology" --icon icon.ico --single-instance --conceal app-build/
+          npx --yes nativefier --name "Kyxgo Technology" "https://sites.google.com/view/kyxgo/technology" --single-instance --conceal app-build/
 
-      # Size Reduction Step: Unused Language Files & Extras Delete Karna
-      - name: Optimize App Size (Cleanup Extra Locales)
+      - name: Cleanup Unnecessary Electron Files
         shell: powershell
         run: |
-          Get-ChildItem -Path "app-build" -Recurse -Filter "locales" | ForEach-Object {
-              Get-ChildItem -Path $_.FullName -Exclude "en-US.pak", "en-GB.pak" | Remove-Item -Force
+          if (Test-Path "app-build") {
+              Get-ChildItem -Path "app-build" -Recurse -Filter "locales" | ForEach-Object {
+                  Get-ChildItem -Path $_.FullName -Exclude "en-US.pak" | Remove-Item -Force
+              }
+              Get-ChildItem -Path "app-build" -Recurse -Include "*.pak.info", "LICENSES.chromium.html" | Remove-Item -Force
           }
 
-      # Code Signing Certificate Generate & Apply
       - name: Generate Code Signing Certificate & Sign Binary Files
         shell: powershell
         run: |
           $cert = New-SelfSignedCertificate -CertStoreLocation cert:\CurrentUser\My -Subject "CN=Kyxgo Technology" -Type CodeSigningCert -KeyUsage DigitalSignature -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3")
           
-          $files = Get-ChildItem -Path "app-build" -Recurse -Include *.exe, *.dll
-          foreach ($file in $files) {
-              Set-AuthenticodeSignature -FilePath $file.FullName -Certificate $cert
+          if (Test-Path "app-build") {
+              $files = Get-ChildItem -Path "app-build" -Recurse -Include *.exe, *.dll
+              foreach ($file in $files) {
+                  Set-AuthenticodeSignature -FilePath $file.FullName -Certificate $cert
+              }
+          } else {
+              Write-Error "app-build directory was not created!"
+              exit 1
           }
 
-      # Fast Silent Inno Setup With Custom App Logo
       - name: Install Inno Setup & Build Fast Installer
         shell: powershell
         run: |
@@ -80,9 +84,8 @@ jobs:
           DefaultGroupName=Kyxgo Technology
           OutputDir=output
           OutputBaseFilename=KyxgoTechnology-Setup
-          SetupIconFile=icon.ico
-          Compression=lzma2/max
-          SolidCompression=yes
+          Compression=lzma/fast
+          SolidCompression=no
           PrivilegesRequired=lowest
           DisableWelcomePage=yes
           DisableReadyPage=yes
@@ -94,8 +97,8 @@ jobs:
           Source: "app-build\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
           
           [Icons]
-          Name: "{group}\Kyxgo Technology"; Filename: "{app}\Kyxgo Technology.exe"; IconFilename: "{app}\icon.ico"
-          Name: "{autodesktop}\Kyxgo Technology"; Filename: "{app}\Kyxgo Technology.exe"; IconFilename: "{app}\icon.ico"
+          Name: "{group}\Kyxgo Technology"; Filename: "{app}\Kyxgo Technology.exe"
+          Name: "{autodesktop}\Kyxgo Technology"; Filename: "{app}\Kyxgo Technology.exe"
 
           [Run]
           Filename: "{app}\Kyxgo Technology.exe"; Description: "Launch App"; Flags: postinstall nowait
@@ -104,19 +107,17 @@ jobs:
           Set-Content -Path "setup.iss" -Value $issContent
           ISCC.exe setup.iss
 
-      # Final Installer EXE Sign Karna
       - name: Sign Final Installer EXE
         shell: powershell
         run: |
           $cert = Get-ChildItem cert:\CurrentUser\My -CodeSigningCert | Select-Object -First 1
           Set-AuthenticodeSignature -FilePath "output\KyxgoTechnology-Setup.exe" -Certificate $cert
 
-      # Upload Signed Installer to Release
-      - name: Upload Signed Files to Release
+      - name: Upload Fast Signed Installer
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v1.0.${{ github.run_number }}
-          name: Kyxgo Release v1.0.${{ github.run_number }}
+          name: Kyxgo Fast Release v1.0.${{ github.run_number }}
           files: output/KyxgoTechnology-Setup.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
