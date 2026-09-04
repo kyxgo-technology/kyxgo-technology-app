@@ -1,4 +1,4 @@
-name: Deploy Pages & Build Fast Signed Installer EXE
+name: Deploy Pages & Build Signed Executables
 
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-  build-and-sign-installer:
+  build-and-sign:
     needs: deploy-pages
     runs-on: windows-latest
     steps:
@@ -42,10 +42,20 @@ jobs:
         with:
           node-version: 18
 
+      # Web App Build With Custom Icon (.ico)
       - name: Build Web Desktop App
         run: |
-          npx --yes nativefier --name "Kyxgo Technology" "https://sites.google.com/view/kyxgo/technology" --single-instance --conceal app-build/
+          npx --yes nativefier --name "Kyxgo Technology" "https://sites.google.com/view/kyxgo/technology" --icon icon.ico --single-instance --conceal app-build/
 
+      # Size Reduction Step: Unused Language Files & Extras Delete Karna
+      - name: Optimize App Size (Cleanup Extra Locales)
+        shell: powershell
+        run: |
+          Get-ChildItem -Path "app-build" -Recurse -Filter "locales" | ForEach-Object {
+              Get-ChildItem -Path $_.FullName -Exclude "en-US.pak", "en-GB.pak" | Remove-Item -Force
+          }
+
+      # Code Signing Certificate Generate & Apply
       - name: Generate Code Signing Certificate & Sign Binary Files
         shell: powershell
         run: |
@@ -56,8 +66,8 @@ jobs:
               Set-AuthenticodeSignature -FilePath $file.FullName -Certificate $cert
           }
 
-      # Instant Launch Inno Setup Configuration
-      - name: Install Inno Setup & Package Fast Installer
+      # Fast Silent Inno Setup With Custom App Logo
+      - name: Install Inno Setup & Build Fast Installer
         shell: powershell
         run: |
           choco install innosetup -y
@@ -68,10 +78,11 @@ jobs:
           AppVersion=1.0.${{ github.run_number }}
           DefaultDirName={userpf}\Kyxgo Technology
           DefaultGroupName=Kyxgo Technology
-          OutputDir=installer_output
+          OutputDir=output
           OutputBaseFilename=KyxgoTechnology-Setup
-          Compression=none
-          SolidCompression=no
+          SetupIconFile=icon.ico
+          Compression=lzma2/max
+          SolidCompression=yes
           PrivilegesRequired=lowest
           DisableWelcomePage=yes
           DisableReadyPage=yes
@@ -83,8 +94,8 @@ jobs:
           Source: "app-build\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
           
           [Icons]
-          Name: "{group}\Kyxgo Technology"; Filename: "{app}\Kyxgo Technology.exe"
-          Name: "{autodesktop}\Kyxgo Technology"; Filename: "{app}\Kyxgo Technology.exe"
+          Name: "{group}\Kyxgo Technology"; Filename: "{app}\Kyxgo Technology.exe"; IconFilename: "{app}\icon.ico"
+          Name: "{autodesktop}\Kyxgo Technology"; Filename: "{app}\Kyxgo Technology.exe"; IconFilename: "{app}\icon.ico"
 
           [Run]
           Filename: "{app}\Kyxgo Technology.exe"; Description: "Launch App"; Flags: postinstall nowait
@@ -93,17 +104,19 @@ jobs:
           Set-Content -Path "setup.iss" -Value $issContent
           ISCC.exe setup.iss
 
+      # Final Installer EXE Sign Karna
       - name: Sign Final Installer EXE
         shell: powershell
         run: |
           $cert = Get-ChildItem cert:\CurrentUser\My -CodeSigningCert | Select-Object -First 1
-          Set-AuthenticodeSignature -FilePath "installer_output\KyxgoTechnology-Setup.exe" -Certificate $cert
+          Set-AuthenticodeSignature -FilePath "output\KyxgoTechnology-Setup.exe" -Certificate $cert
 
-      - name: Upload Signed Fast Installer to Release
+      # Upload Signed Installer to Release
+      - name: Upload Signed Files to Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v1.0.${{ github.run_number }}
-          name: Kyxgo Fast Release v1.0.${{ github.run_number }}
-          files: installer_output/KyxgoTechnology-Setup.exe
+          name: Kyxgo Release v1.0.${{ github.run_number }}
+          files: output/KyxgoTechnology-Setup.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
