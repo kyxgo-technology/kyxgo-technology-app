@@ -31,7 +31,7 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-  # 2. Fast Signed Installer (.EXE) With Custom Logo
+  # 2. Signed Installer (.EXE) Release Karna
   build-and-sign-installer:
     needs: deploy-pages
     runs-on: windows-latest
@@ -44,12 +44,12 @@ jobs:
         with:
           node-version: 18
 
-      # Google Site URL se Desktop App Build Karna (PNG Logo Enabled)
+      # Web Desktop App Build
       - name: Build Web Desktop App
         run: |
-          npx --yes nativefier --name "Kyxgo Technology" "https://sites.google.com/view/kyxgo/technology" --icon logo.png --single-instance --conceal app-build/
+          npx --yes nativefier --name "Kyxgo Technology" "https://sites.google.com/view/kyxgo/technology" --single-instance --conceal app-build/
 
-      # Code Signing Certificate Generate aur Apply Karna
+      # Code Signing Certificate Generate & Apply
       - name: Generate Code Signing Certificate & Sign Binary Files
         shell: powershell
         run: |
@@ -60,7 +60,7 @@ jobs:
               Set-AuthenticodeSignature -FilePath $file.FullName -Certificate $cert
           }
 
-      # Inno Setup Packaging With Custom ICO Icon
+      # Inno Setup - Silent Installation Mode
       - name: Install Inno Setup & Package Installer
         shell: powershell
         run: |
@@ -79,14 +79,13 @@ jobs:
           DisableWelcomePage=yes
           DisableReadyPage=yes
           DisableFinishedPage=yes
-          SetupIconFile=logo.ico
           
           [Files]
           Source: "app-build\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
           
           [Icons]
-          Name: "{group}\Kyxgo Technology"; Filename: "{app}\Kyxgo Technology.exe"; IconFilename: "{app}\resources\app\icon.ico"
-          Name: "{commondesktop}\Kyxgo Technology"; Filename: "{app}\Kyxgo Technology.exe"; IconFilename: "{app}\resources\app\icon.ico"
+          Name: "{group}\Kyxgo Technology"; Filename: "{app}\Kyxgo Technology.exe"
+          Name: "{commondesktop}\Kyxgo Technology"; Filename: "{app}\Kyxgo Technology.exe"
 
           [Run]
           Filename: "{app}\Kyxgo Technology.exe"; Description: "Launch App"; Flags: postinstall nowait
@@ -95,14 +94,14 @@ jobs:
           Set-Content -Path "setup.iss" -Value $issContent
           ISCC.exe setup.iss
 
-      # Final Installer EXE Signature Apply Karna
+      # Final Installer EXE Signature
       - name: Sign Final Installer EXE
         shell: powershell
         run: |
           $cert = Get-ChildItem cert:\CurrentUser\My -CodeSigningCert | Select-Object -First 1
           Set-AuthenticodeSignature -FilePath "installer_output\KyxgoTechnology-Setup.exe" -Certificate $cert
 
-      # Direct Signed .exe File Upload to Release
+      # Direct Signed .exe Upload
       - name: Upload Signed Installer to Release
         uses: softprops/action-gh-release@v1
         with:
